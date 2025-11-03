@@ -1,0 +1,27 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.tmp
+.pytest_cache/
+.mypy_cache/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Generated data
+data/
+cache/
+output/
+
+# OS cruft
+.DS_Store
+Thumbs.db
