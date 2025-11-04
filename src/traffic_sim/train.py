@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from dataclasses import replace
 import numpy as np
 import torch
 import typer
+from gymnasium.vector import AsyncVectorEnv
+from gymnasium.vector.async_vector_env import AutoresetMode
 
 from .agent import AgentConfig, DQNAgent, ReplayBuffer
 from .config import SimulationConfig
@@ -40,6 +43,7 @@ def dqn(
     model_dropout: float = typer.Option(0.1, help="Dropout applied within the transformer encoder."),
     control_interval: float = typer.Option(5.0, help="Seconds between RL actions."),
     output_dir: Path = typer.Option(Path("output/models"), help="Directory for model checkpoints."),
+    num_envs: int = typer.Option(1, help="Number of parallel simulation environments."),
     device: str = typer.Option("auto", help="Training device: auto/cuda/cpu."),
     amp: bool = typer.Option(False, help="Use CUDA automatic mixed precision."),
     grad_clip: float = typer.Option(5.0, help="Gradient clipping norm."),
@@ -63,9 +67,10 @@ def dqn(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     base_config = SimulationConfig(headless=True)
-    env = TrafficEnv(base_config, control_interval_s=control_interval)
-    obs_shape = env.observation_space.shape
-    num_actions = env.action_space.n
+    probe_env = TrafficEnv(base_config, control_interval_s=control_interval)
+    obs_shape = probe_env.observation_space.shape
+    num_actions = probe_env.action_space.n
+    probe_env.close()
 
     if model_type == "transformer" and model_width % model_heads != 0:
         raise ValueError("model_width must be divisible by model_heads for transformer models.")
@@ -112,25 +117,43 @@ def dqn(
 
     rng = np.random.default_rng(seed)
 
-    try:
-        for episode in range(episodes):
-            state, _ = env.reset(seed=int(rng.integers(0, 1_000_000)))
-            done = False
+    num_envs = max(1, num_envs)
+
+    def _make_env_instance(env_seed: int) -> TrafficEnv:
+        env_cfg = replace(base_config, random_seed=env_seed)
+        return TrafficEnv(env_cfg, control_interval_s=control_interval)
+
+    loss_accumulator: list[float] = []
+    episodes_completed = 0
+
+    if num_envs == 1:
+        env_seed = int(rng.integers(0, 1_000_000))
+        env = _make_env_instance(env_seed)
+        try:
+            state, _ = env.reset(seed=env_seed)
             episode_reward = 0.0
-            episode_losses: list[float] = []
-            steps = 0
+            episode_length = 0
 
-            while not done:
+            while episodes_completed < episodes:
                 epsilon = max(epsilon_end, epsilon - epsilon_decay_rate)
-                action = agent.act(state, epsilon, num_actions)
-                next_state, reward, terminated, truncated, _ = env.step(action)
+                policy_net.eval()
+                with torch.no_grad():
+                    state_tensor = torch.from_numpy(state).unsqueeze(0).to(device_obj, non_blocking=True)
+                    q_values = policy_net(state_tensor)
+                policy_net.train()
 
-                done = terminated or truncated
+                if float(rng.random()) < epsilon:
+                    action = int(rng.integers(0, num_actions))
+                else:
+                    action = int(torch.argmax(q_values, dim=1).item())
+
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                done = bool(terminated or truncated)
                 buffer.push(state, action, reward, next_state, done)
 
                 state = next_state
-                episode_reward += reward
-                steps += 1
+                episode_reward += float(reward)
+                episode_length += 1
                 global_step += 1
 
                 if len(buffer) >= max(warmup_steps, batch_size) and global_step % train_interval == 0:
@@ -139,38 +162,148 @@ def dqn(
                             break
                         batch = buffer.sample(batch_size)
                         loss = agent.update(batch)
-                        episode_losses.append(loss)
+                        loss_accumulator.append(loss)
 
-            mean_loss = float(np.mean(episode_losses)) if episode_losses else 0.0
-            gpu_extra = ""
-            if device == "cuda":
-                torch.cuda.synchronize()
-                current_mem = torch.cuda.memory_allocated() / (1024 ** 3)
-                peak_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
-                gpu_extra = f" | gpu-mem={current_mem:4.1f} GiB (peak {peak_mem:4.1f})"
-            typer.echo(
-                f"Episode {episode + 1:03d}/{episodes} | "
-                f"reward={episode_reward:8.2f} | "
-                f"steps={steps:04d} | "
-                f"epsilon={epsilon:.3f} | "
-                f"loss={mean_loss:.4f}"
-                f"{gpu_extra}"
-            )
-            if device == "cuda":
-                torch.cuda.reset_peak_memory_stats()
+                if not done:
+                    continue
 
-            if episode_reward > best_reward:
-                best_reward = episode_reward
-                _save_checkpoint(
-                    output_dir,
-                    model_type,
-                    policy_net,
-                    optimizer,
-                    episode,
-                    episode_reward,
+                episodes_completed += 1
+                mean_loss = float(np.mean(loss_accumulator)) if loss_accumulator else 0.0
+                loss_accumulator.clear()
+
+                gpu_extra = ""
+                if device == "cuda":
+                    torch.cuda.synchronize()
+                    current_mem = torch.cuda.memory_allocated() / (1024 ** 3)
+                    peak_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                    gpu_extra = f" | gpu-mem={current_mem:4.1f} GiB (peak {peak_mem:4.1f})"
+                    torch.cuda.reset_peak_memory_stats()
+
+                typer.echo(
+                    f"Episode {episodes_completed:03d}/{episodes} | "
+                    f"reward={episode_reward:8.2f} | "
+                    f"steps={episode_length:04d} | "
+                    f"epsilon={epsilon:.3f} | "
+                    f"loss={mean_loss:.4f}"
+                    f"{gpu_extra}"
                 )
+
+                if episode_reward > best_reward:
+                    best_reward = episode_reward
+                    _save_checkpoint(
+                        output_dir,
+                        model_type,
+                        policy_net,
+                        optimizer,
+                        episodes_completed - 1,
+                        episode_reward,
+                    )
+
+                state, _ = env.reset(seed=int(rng.integers(0, 1_000_000)))
+                episode_reward = 0.0
+                episode_length = 0
+        finally:
+            env.close()
+        return
+
+    # Vectorised environment branch
+    env_seeds = [seed + 997 * i for i in range(num_envs)]
+    env_fns = [lambda s=s: _make_env_instance(s) for s in env_seeds]
+    vec_env = AsyncVectorEnv(
+        env_fns,
+        shared_memory=True,
+        autoreset_mode=AutoresetMode.NEXT_STEP,
+    )
+
+    try:
+        states, _ = vec_env.reset(seed=env_seeds)
+        episode_returns = np.zeros(num_envs, dtype=np.float32)
+        episode_lengths = np.zeros(num_envs, dtype=np.int32)
+
+        while episodes_completed < episodes:
+            epsilon = max(epsilon_end, epsilon - epsilon_decay_rate * num_envs)
+
+            policy_net.eval()
+            with torch.no_grad():
+                state_tensor = torch.from_numpy(states).to(device_obj, non_blocking=True)
+                q_values = policy_net(state_tensor)
+            policy_net.train()
+
+            greedy_actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            random_mask = rng.random(num_envs) < epsilon
+            random_actions = rng.integers(0, num_actions, size=num_envs)
+            actions = greedy_actions
+            actions[random_mask] = random_actions[random_mask]
+
+            next_states, rewards, terminated, truncated, infos = vec_env.step(actions)
+            dones = np.logical_or(terminated, truncated)
+
+            for idx in range(num_envs):
+                buffer.push(states[idx], int(actions[idx]), float(rewards[idx]), next_states[idx], bool(dones[idx]))
+
+            states = next_states
+            episode_returns += rewards
+            episode_lengths += 1
+            global_step += num_envs
+
+            if len(buffer) >= max(warmup_steps, batch_size) and global_step % train_interval == 0:
+                for _ in range(updates_per_step):
+                    if len(buffer) < batch_size:
+                        break
+                    batch = buffer.sample(batch_size)
+                    loss = agent.update(batch)
+                    loss_accumulator.append(loss)
+
+            mean_loss_for_log = float(np.mean(loss_accumulator)) if loss_accumulator else 0.0
+            logged_any = False
+            for idx in range(num_envs):
+                if not dones[idx]:
+                    continue
+
+                episodes_completed += 1
+                ep_reward = float(episode_returns[idx])
+                ep_steps = int(episode_lengths[idx])
+                logged_any = True
+
+                gpu_extra = ""
+                if device == "cuda":
+                    torch.cuda.synchronize()
+                    current_mem = torch.cuda.memory_allocated() / (1024 ** 3)
+                    peak_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                    gpu_extra = f" | gpu-mem={current_mem:4.1f} GiB (peak {peak_mem:4.1f})"
+                    torch.cuda.reset_peak_memory_stats()
+
+                typer.echo(
+                    f"Episode {episodes_completed:03d}/{episodes} | "
+                    f"reward={ep_reward:8.2f} | "
+                    f"steps={ep_steps:04d} | "
+                    f"epsilon={epsilon:.3f} | "
+                    f"loss={mean_loss_for_log:.4f}"
+                    f"{gpu_extra}"
+                )
+
+                if ep_reward > best_reward:
+                    best_reward = ep_reward
+                    _save_checkpoint(
+                        output_dir,
+                        model_type,
+                        policy_net,
+                        optimizer,
+                        episodes_completed - 1,
+                        ep_reward,
+                    )
+
+                episode_returns[idx] = 0.0
+                episode_lengths[idx] = 0
+
+                if episodes_completed >= episodes:
+                    break
+
+            if logged_any:
+                loss_accumulator.clear()
+
     finally:
-        env.close()
+        vec_env.close()
 
 
 def _save_checkpoint(

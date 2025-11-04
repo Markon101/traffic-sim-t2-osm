@@ -369,7 +369,7 @@ class PygameVisualizer:
                     start_angle = -math.pi / 2 + idx * (2 * math.pi / phase_count)
                     end_angle = start_angle + (2 * math.pi / phase_count)
                     color = self._phase_palette[idx % len(self._phase_palette)]
-                    if idx == signal.current_phase_index:
+                    if idx == signal.current_phase_index and not signal.is_transitioning():
                         arc_color = color
                         width = 3
                     else:
@@ -388,9 +388,13 @@ class PygameVisualizer:
                 active_color = self._phase_palette[
                     signal.current_phase_index % len(self._phase_palette)
                 ]
-                progress = 0.0
-                if signal.target_duration > 1e-6:
-                    progress = min(1.0, signal.time_in_phase / signal.target_duration)
+                if signal.is_transitioning():
+                    active_color = (240, 190, 80)
+                    progress = signal.transition_progress()
+                    total_duration = signal.yellow_duration_s
+                else:
+                    total_duration = max(1e-6, signal.target_duration)
+                    progress = min(1.0, signal.time_in_phase / total_duration)
                 progress_rect = pygame.Rect(
                     0, 0, (inner_radius - 1) * 2, (inner_radius - 1) * 2
                 )
@@ -406,8 +410,11 @@ class PygameVisualizer:
                     )
 
                 if ui_scale >= 0.7:
-                    remaining = max(0.0, signal.target_duration - signal.time_in_phase)
-                    timer_text = self.font_small.render(f"{remaining:2.0f}", True, (235, 235, 235))
+                    if signal.is_transitioning():
+                        remaining_time = max(0.0, signal.yellow_duration_s - signal.time_in_phase)
+                    else:
+                        remaining_time = max(0.0, signal.target_duration - signal.time_in_phase)
+                    timer_text = self.font_small.render(f"{remaining_time:2.0f}", True, (235, 235, 235))
                     self.screen.blit(
                         timer_text,
                         (

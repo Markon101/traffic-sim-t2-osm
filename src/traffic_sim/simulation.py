@@ -61,8 +61,12 @@ class Simulation:
             rng=config.rng(),
         )
 
-        self.signals: Dict[int, TrafficSignal] = build_signals(self.network)
+        self.signals: Dict[int, TrafficSignal] = build_signals(
+            self.network, yellow_duration_s=config.signal_yellow_duration
+        )
         self.rng = config.rng()
+        self.control_warmup_s = max(0.0, config.signal_warmup_seconds)
+        self._warmup_complete = self.control_warmup_s <= 0.0
 
         self.vehicles: List[Vehicle] = []
         self.completed: List[Vehicle] = []
@@ -89,6 +93,7 @@ class Simulation:
         self._overrides.clear()
         self._latest_incidents.clear()
         self._metrics_header_written = False
+        self._warmup_complete = self.control_warmup_s <= 0.0
         for edge in self.network.iter_edges():
             if edge.is_closed:
                 self.network.open_edge(edge.key)
@@ -97,6 +102,9 @@ class Simulation:
             signal.time_in_phase = 0.0
             signal.target_duration = signal.current_phase().base_duration_s
             signal.history.clear()
+            signal.in_transition = False
+            signal.pending_phase_index = None
+            signal.pending_target_duration = None
 
     def run(self) -> SimulationReport:
         steps = self.config.total_steps()
@@ -249,25 +257,31 @@ class Simulation:
         return queues
 
     def _update_signals(self, dt: float) -> None:
-        overrides = self._overrides
-        next_overrides: Dict[int, Tuple[int, float]] = {}
+        adaptive_enabled = self._warmup_complete or self.time_s >= self.control_warmup_s
+        if not self._warmup_complete and adaptive_enabled:
+            self._warmup_complete = True
+            self._overrides.clear()
+
+        active_overrides = self._overrides if adaptive_enabled else {}
+        next_overrides: Dict[int, Tuple[int, float]] = {} if adaptive_enabled else self._overrides
 
         for node_id, signal in self.signals.items():
             all_edges = {edge for phase in signal.phases for edge in phase.incoming_edges}
             localized_queue = {edge: self._queue_lengths.get(edge, 0.0) for edge in all_edges}
 
-            if node_id in overrides:
-                phase_idx, duration = overrides[node_id]
+            if adaptive_enabled and node_id in active_overrides:
+                phase_idx, duration = active_overrides[node_id]
                 signal.set_phase(phase_idx, duration)
                 next_overrides[node_id] = (phase_idx, duration)
-            elif self.controller:
+            elif adaptive_enabled and self.controller:
                 decision = self.controller.decide(self.time_s, signal, localized_queue)
                 if decision:
                     signal.set_phase(*decision)
 
-            signal.advance(dt, localized_queue)
+            signal.advance(dt, localized_queue, adaptive=adaptive_enabled)
 
-        self._overrides = next_overrides
+        if adaptive_enabled:
+            self._overrides = next_overrides
 
     def _update_vehicles(self, edge_map: Dict[EdgeKey, List[Vehicle]], dt: float) -> None:
         completed: List[Vehicle] = []

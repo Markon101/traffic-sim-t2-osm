@@ -86,6 +86,8 @@ class SimulationConfig:
     use_scaled_display: bool = True
     hardware_acceleration: bool = True
     antialias_rendering: bool = True
+    signal_warmup_seconds: float = 120.0
+    signal_yellow_duration: float = 3.0
 
     def total_steps(self) -> int:
         return int(self.simulation_minutes * 60 / self.dt)

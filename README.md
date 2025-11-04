@@ -43,6 +43,9 @@ Key CLI options:
 > **Display tuning**  
 > The `SimulationConfig` exposes `enable_vsync`, `use_scaled_display`, `hardware_acceleration`, and `antialias_rendering` flags so you can dial in visual fidelity (and disable them when profiling headless workloads).
 
+> **Signal warmup**  
+> Intersections run fixed-timing cycles for the first `signal_warmup_seconds` (default 120 s) with an automatic 3 s yellow interval, then hand over to the adaptive/controller logic or RL agent. Adjust `signal_warmup_seconds`/`signal_yellow_duration` in `SimulationConfig` to change that behaviour.
+
 ### Train a Transformer DQN controller
 ```bash
 traffic-sim train dqn \
@@ -51,6 +54,7 @@ traffic-sim train dqn \
   --model-type transformer \
   --model-width 512 \
   --model-layers 8 \
+  --num-envs 4 \
   --updates-per-step 4 \
   --control-interval 6
 ```
@@ -58,6 +62,7 @@ Important flags:
 - `--model-type`: `transformer` (default) or `residual`.
 - `--model-width/--model-layers/--model-heads`: Scale the transformer capacity (and VRAM footprint).
 - `--batch-size`, `--train-interval`, `--updates-per-step`: Shape GPU throughput by deciding how often and how hard each optimisation pass hits.
+- `--num-envs`: Spin up parallel simulation workers (via `AsyncVectorEnv`) to keep the GPU busy while the CPUs advance traffic state.
 - `--epsilon-*`: Configure epsilon-greedy exploration schedule.
 - `--control-interval`: Seconds between agent actions in the simulator.
 - `--output-dir`: Checkpoint directory (defaults to `output/models`).

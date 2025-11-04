@@ -1,0 +1,11 @@
+# Codex Context
+
+## Recent Enhancements
+- Added configurable signal warm-up period with yellow-phase transitions before adaptive/agent control engages.
+- Introduced anti-aliased Pygame rendering (gfxdraw) with vsync/hardware toggles to reduce jitter.
+- Expanded DQN training CLI with AMP, gradient clipping, larger transformer sizes, and AsyncVectorEnv-based parallel environments to saturate GPUs.
+
+## Follow-up Ideas
+- Consider caching road polylines into pre-rendered surfaces or using dirty-rect updates for further FPS gains.
+- Evaluate lane-level queues or turn pockets so the controller can reason about protected/permitted phases.
+- Profile vector env CPU usage; consider multiprocessing start-method tweaks or shared-state batching if scaling beyond ~8 envs.
