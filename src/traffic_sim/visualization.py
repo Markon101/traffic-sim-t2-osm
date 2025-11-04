@@ -77,6 +77,10 @@ class PygameVisualizer:
                     return False
                 if event.key in (pygame.K_r, pygame.K_SPACE):
                     self._reset_view()
+            elif event.type == pygame.MOUSEWHEEL:
+                if event.y:
+                    factor = self.zoom_step ** event.y
+                    self._zoom_at(pygame.mouse.get_pos(), factor)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
                     self._dragging = True
@@ -294,7 +298,8 @@ class PygameVisualizer:
                 width=0,
             )
 
-            label = incident.kind.value[0].upper()
+            kind_value = getattr(incident.kind, "value", incident.kind)
+            label = str(kind_value)[0].upper()
             text = self.font_micro.render(label, True, (255, 240, 220))
             self.screen.blit(
                 text,
@@ -309,12 +314,12 @@ class PygameVisualizer:
             if not self._point_on_screen(pos, margin=24):
                 continue
 
-            outer_radius = int(max(7, 10 * ui_scale))
+            outer_radius = int(max(5, 8 * ui_scale))
             ring_rect = pygame.Rect(0, 0, outer_radius * 2, outer_radius * 2)
             ring_rect.center = pos
 
-            pygame.draw.circle(self.screen, (18, 24, 36), pos, outer_radius + 3)
-            pygame.draw.circle(self.screen, (28, 38, 56), pos, outer_radius + 3, width=2)
+            pygame.draw.circle(self.screen, (18, 24, 36), pos, outer_radius + 2)
+            pygame.draw.circle(self.screen, (28, 38, 56), pos, outer_radius + 2, width=2)
 
             phase_count = len(signal.phases)
             if phase_count:
@@ -327,7 +332,7 @@ class PygameVisualizer:
                         color = tuple(int(c * 0.45) for c in color)
                     pygame.draw.arc(self.screen, color, ring_rect, start_angle, end_angle, width)
 
-            inner_radius = max(4, outer_radius - 4)
+            inner_radius = max(3, outer_radius - 3)
             pygame.draw.circle(self.screen, (12, 18, 28), pos, inner_radius)
             pygame.draw.circle(self.screen, (45, 62, 82), pos, inner_radius, width=1)
 

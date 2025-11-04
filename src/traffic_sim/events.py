@@ -66,7 +66,8 @@ class IncidentManager:
         edge = self.rng.choice(available_edges)
         severity = float(self.rng.uniform(0.3, 1.0))
         duration = float(self.rng.uniform(5 * 60, 20 * 60)) * severity
-        kind = self.rng.choice(list(IncidentType))
+        kind_index = int(self.rng.integers(0, len(IncidentType)))
+        kind = list(IncidentType)[kind_index]
 
         incident = Incident(
             incident_id=self._next_id,

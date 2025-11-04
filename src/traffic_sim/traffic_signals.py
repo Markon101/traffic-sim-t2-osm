@@ -33,6 +33,7 @@ class TrafficSignal:
 
     def advance(self, dt: float, queue_lengths: Dict[EdgeKey, float]) -> None:
         self.time_in_phase += dt
+        current_phase = self.current_phase()
         if self.time_in_phase < self.target_duration:
             return
 
@@ -44,10 +45,22 @@ class TrafficSignal:
         pressures.sort(key=lambda item: item[1], reverse=True)
         next_idx = pressures[0][0] if pressures else (self.current_phase_index + 1) % len(self.phases)
 
+        max_exceeded = self.time_in_phase >= current_phase.max_duration_s - 1e-6
+        if max_exceeded and len(self.phases) > 1:
+            next_idx = (self.current_phase_index + 1) % len(self.phases)
+        elif pressures:
+            top_pressure = pressures[0][1]
+            tied_indices = [idx for idx, value in pressures if abs(value - top_pressure) < 1e-6]
+            if next_idx == self.current_phase_index and len(tied_indices) > 1:
+                if self.current_phase_index in tied_indices:
+                    current_pos = tied_indices.index(self.current_phase_index)
+                    next_idx = tied_indices[(current_pos + 1) % len(tied_indices)]
+                else:
+                    next_idx = tied_indices[0]
+
         if next_idx == self.current_phase_index:
             # extend current phase slightly, but clamp to max
-            phase = self.current_phase()
-            self.target_duration = min(phase.max_duration_s, self.target_duration + 5.0)
+            self.target_duration = min(current_phase.max_duration_s, self.target_duration + 5.0)
         else:
             self.switch_phase(next_idx)
             self.target_duration = self._compute_duration(queue_lengths)
