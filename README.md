@@ -6,7 +6,7 @@ An adaptive traffic simulation stack that ingests real-world OpenStreetMap data,
 - **Real network geometry**: Downloads and caches drivable OSM graphs, including multi-lane roads, travel times, and signalised intersections.
 - **Heterogeneous vehicles**: Multiple vehicle classes (sedans, SUVs, vans, semi-trailers) with realistic acceleration, speed caps, and fuel-use modelling.
 - **Dynamic scenarios**: Stochastic spawning, car-following dynamics, adaptive signal heuristics, and incident generation (accidents, weather, roadworks) that degrade throughput or close roads.
-- **Headless + GUI**: Optimised headless mode for RL training and a polished pygame UI that animates vehicles, incidents, and signal phases in real time.
+- **Headless + GUI**: Optimised headless mode for RL training and a polished pygame UI with interactive camera controls, incident markers, and phase-progress signal rings.
 - **RL environment**: Gymnasium-compatible environment exposing padded observations over the entire network and a discrete action space that selects phase/duration pairs for any signal.
 - **Transformer DQN**: ~1M parameter Torch models (transformer encoder and residual MLP baseline) with CUDA-first training loop, replay buffer, and soft target updates.
 - **Metrics export**: Optional CSV logging of global metrics each simulation tick.
@@ -33,6 +33,12 @@ Key CLI options:
 - `--refresh-graph`: Force a new map download (cached under `data/osm_graph.graphml`).
 - `--screen-width/--screen-height`: Custom viewport size.
 - `--headless` / `--no-headless`: Toggle pygame.
+
+### GUI Controls
+- **Mouse drag**: pan around the network.
+- **Mouse wheel**: zoom in and out with focus preserved under the cursor.
+- **R / Space**: reset the camera to the default framing.
+- Adaptive signal rings show active phases, remaining-green countdowns, and incident markers pulse at mid-block locations for easy spotting.
 
 ### Train a Transformer DQN controller
 ```bash

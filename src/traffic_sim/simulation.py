@@ -129,7 +129,10 @@ class Simulation:
             if not self.visualizer.handle_events():
                 return False
             metrics = self._metrics_snapshot()
-            incidents = {incident.incident_id: incident.severity for incident in self.incident_manager.active_incidents.values()}
+            incidents = {
+                incident.edge_key: incident
+                for incident in self.incident_manager.active_incidents.values()
+            }
             self.visualizer.draw(self.vehicles, self.signals, incidents, metrics)
             self.visualizer.tick()
 
