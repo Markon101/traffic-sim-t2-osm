@@ -327,10 +327,17 @@ class PygameVisualizer:
                     start_angle = -math.pi / 2 + idx * (2 * math.pi / phase_count)
                     end_angle = start_angle + (2 * math.pi / phase_count)
                     color = self._phase_palette[idx % len(self._phase_palette)]
-                    width = 3 if idx == signal.current_phase_index else 2
-                    if idx != signal.current_phase_index:
-                        color = tuple(int(c * 0.45) for c in color)
-                    pygame.draw.arc(self.screen, color, ring_rect, start_angle, end_angle, width)
+                    if idx == signal.current_phase_index:
+                        arc_color = color
+                        width = 3
+                    else:
+                        arc_color = (
+                            max(40, int(color[0] * 0.25)),
+                            max(50, int(color[1] * 0.3)),
+                            max(60, int(color[2] * 0.35)),
+                        )
+                        width = 2
+                    pygame.draw.arc(self.screen, arc_color, ring_rect, start_angle, end_angle, width)
 
             inner_radius = max(3, outer_radius - 3)
             pygame.draw.circle(self.screen, (12, 18, 28), pos, inner_radius)

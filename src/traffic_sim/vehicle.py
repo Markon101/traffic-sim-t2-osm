@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -46,8 +47,18 @@ class Vehicle:
         target_speed = min(self.profile.max_speed_mps, edge.speed_mps)
 
         # Reduce speed if the signal ahead is red
-        if not signal_green and self.distance_to_edge_end(network) < 10.0:
-            target_speed = min(target_speed, 2.0)
+        distance_to_stop = self.distance_to_edge_end(network)
+        stop_buffer = 2.5
+        if not signal_green:
+            # Reduce speed progressively to reach a full stop before the intersection.
+            if distance_to_stop <= stop_buffer + 1e-3:
+                target_speed = 0.0
+            elif distance_to_stop < 35.0:
+                comfortable_decel = max(1.5, self.profile.acceleration_mps2 * 0.9)
+                safe_speed = math.sqrt(max(0.0, 2.0 * comfortable_decel * (distance_to_stop - stop_buffer)))
+                target_speed = min(target_speed, safe_speed)
+            else:
+                target_speed = target_speed * 0.8
 
         # Simple IDM-inspired spacing with the leader vehicle
         if leader and leader.current_edge() == self.current_edge():
@@ -61,15 +72,36 @@ class Vehicle:
         self.speed_mps = max(0.0, self.speed_mps + acceleration * dt)
         move_distance = self.speed_mps * dt
 
+        stop_line = max(0.0, edge.length_m - stop_buffer)
         remaining = edge.length_m - self.distance_on_edge
-        if move_distance >= remaining - 1e-2:
-            move_distance = remaining
-            self.distance_on_edge = edge.length_m
+        proposed_position = self.distance_on_edge + move_distance
+
+        stopped_for_signal = False
+        if not signal_green:
+            if self.distance_on_edge >= stop_line - 1e-3:
+                self.distance_on_edge = stop_line
+                self.speed_mps = 0.0
+                stopped_for_signal = True
+            elif proposed_position >= stop_line:
+                self.distance_on_edge = stop_line
+                self.speed_mps = 0.0
+                stopped_for_signal = True
+            else:
+                self.distance_on_edge = proposed_position
         else:
-            self.distance_on_edge += move_distance
+            if move_distance >= remaining - 1e-2:
+                move_distance = remaining
+                self.distance_on_edge = edge.length_m
+            else:
+                self.distance_on_edge = proposed_position
 
         self.travel_time_s += dt
         self._update_fuel(acceleration, dt)
+
+        if stopped_for_signal:
+            self.waiting_for_signal = True
+            return
+
         self.waiting_for_signal = self.speed_mps < 0.5 and move_distance < 0.1
 
         if self.distance_on_edge >= edge.length_m - 1e-2:
