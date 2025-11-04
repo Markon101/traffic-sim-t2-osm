@@ -6,7 +6,7 @@ An adaptive traffic simulation stack that ingests real-world OpenStreetMap data,
 - **Real network geometry**: Downloads and caches drivable OSM graphs, including multi-lane roads, travel times, and signalised intersections.
 - **Heterogeneous vehicles**: Multiple vehicle classes (sedans, SUVs, vans, semi-trailers) with realistic acceleration, speed caps, and fuel-use modelling.
 - **Dynamic scenarios**: Stochastic spawning, car-following dynamics, adaptive signal heuristics, and incident generation (accidents, weather, roadworks) that degrade throughput or close roads.
-- **Headless + GUI**: Optimised headless mode for RL training and a polished pygame UI with interactive camera controls, incident markers, and phase-progress signal rings.
+- **Headless + GUI**: Optimised headless mode for RL training and a polished, vsync-aware pygame UI with interactive camera controls, anti-aliased roads, incident markers, and phase-progress signal rings.
 - **RL environment**: Gymnasium-compatible environment exposing padded observations over the entire network and a discrete action space that selects phase/duration pairs for any signal.
 - **Transformer DQN**: ~1M parameter Torch models (transformer encoder and residual MLP baseline) with CUDA-first training loop, replay buffer, and soft target updates.
 - **Metrics export**: Optional CSV logging of global metrics each simulation tick.
@@ -40,15 +40,27 @@ Key CLI options:
 - **R / Space**: reset the camera to the default framing.
 - Adaptive signal rings show active phases, remaining-green countdowns, and incident markers pulse at mid-block locations for easy spotting.
 
+> **Display tuning**  
+> The `SimulationConfig` exposes `enable_vsync`, `use_scaled_display`, `hardware_acceleration`, and `antialias_rendering` flags so you can dial in visual fidelity (and disable them when profiling headless workloads).
+
 ### Train a Transformer DQN controller
 ```bash
-traffic-sim train dqn --episodes 80 --model-type transformer --control-interval 6
+traffic-sim train dqn \
+  --episodes 150 \
+  --batch-size 256 \
+  --model-type transformer \
+  --model-width 512 \
+  --model-layers 8 \
+  --updates-per-step 4 \
+  --control-interval 6
 ```
 Important flags:
 - `--model-type`: `transformer` (default) or `residual`.
+- `--model-width/--model-layers/--model-heads`: Scale the transformer capacity (and VRAM footprint).
+- `--batch-size`, `--train-interval`, `--updates-per-step`: Shape GPU throughput by deciding how often and how hard each optimisation pass hits.
 - `--epsilon-*`: Configure epsilon-greedy exploration schedule.
+- `--control-interval`: Seconds between agent actions in the simulator.
 - `--output-dir`: Checkpoint directory (defaults to `output/models`).
-- `--control-interval`: Seconds between agent actions.
 
 Checkpoints are saved as `output/models/<model>-dqn.pt` and contain model + optimiser state for continued training.
 

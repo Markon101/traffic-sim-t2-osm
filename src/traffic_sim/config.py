@@ -82,6 +82,10 @@ class SimulationConfig:
     enable_gui_overlays: bool = True
     export_metrics: bool = False
     metrics_output: Path = Path("output/metrics.csv")
+    enable_vsync: bool = True
+    use_scaled_display: bool = True
+    hardware_acceleration: bool = True
+    antialias_rendering: bool = True
 
     def total_steps(self) -> int:
         return int(self.simulation_minutes * 60 / self.dt)

@@ -15,8 +15,10 @@ from .vehicle import Vehicle
 
 try:
     import pygame
+    from pygame import gfxdraw
 except Exception:  # pragma: no cover
     pygame = None
+    gfxdraw = None
 
 
 class PygameVisualizer:
@@ -26,11 +28,27 @@ class PygameVisualizer:
         if pygame is None:
             raise ImportError("pygame is required for visualisation mode")
 
-        pygame.init()
-        pygame.display.set_caption("Traffic Simulator")
         self.config = config
         self.network = network
-        self.screen = pygame.display.set_mode(config.screen_size)
+        self.antialias = getattr(config, "antialias_rendering", True)
+
+        pygame.init()
+        pygame.display.set_caption("Traffic Simulator")
+        flags = pygame.DOUBLEBUF
+        if getattr(config, "use_scaled_display", True):
+            flags |= pygame.SCALED
+        if getattr(config, "hardware_acceleration", True):
+            flags |= pygame.HWSURFACE
+        vsync_enabled = getattr(config, "enable_vsync", True)
+        try:
+            self.screen = pygame.display.set_mode(
+                config.screen_size,
+                flags,
+                vsync=1 if vsync_enabled else 0,
+            )
+        except TypeError:
+            # Older pygame builds do not expose the vsync keyword.
+            self.screen = pygame.display.set_mode(config.screen_size, flags)
         self.screen_rect = self.screen.get_rect()
         self.clock = pygame.time.Clock()
 
@@ -201,6 +219,31 @@ class PygameVisualizer:
             and -margin <= y <= self.screen_rect.height + margin
         )
 
+    def _draw_disc(self, pos: Tuple[int, int], radius: int, color: Tuple[int, int, int]) -> None:
+        if radius <= 0:
+            return
+        if gfxdraw is not None and self.antialias:
+            gfxdraw.filled_circle(self.screen, pos[0], pos[1], radius, color)
+            gfxdraw.aacircle(self.screen, pos[0], pos[1], radius, color)
+        else:
+            pygame.draw.circle(self.screen, color, pos, radius)
+
+    def _draw_ring(
+        self,
+        pos: Tuple[int, int],
+        outer_radius: int,
+        inner_radius: int,
+        outer_color: Tuple[int, int, int],
+        inner_color: Tuple[int, int, int],
+    ) -> None:
+        outer_radius = max(outer_radius, 0)
+        inner_radius = max(inner_radius, 0)
+        if outer_radius <= 0:
+            return
+        self._draw_disc(pos, outer_radius, outer_color)
+        if inner_radius > 0 and inner_radius < outer_radius:
+            self._draw_disc(pos, inner_radius, inner_color)
+
     # ------------------------------------------------------------------ #
     # Drawing primitives                                                 #
     # ------------------------------------------------------------------ #
@@ -227,10 +270,14 @@ class PygameVisualizer:
             width = self._road_width(edge)
 
             pygame.draw.lines(self.screen, color, False, screen_points.tolist(), width)
+            if self.antialias:
+                pygame.draw.aalines(self.screen, color, False, screen_points.tolist(), blend=1)
 
             if incident:
                 overlay_color = (255, 210, 120)
                 pygame.draw.lines(self.screen, overlay_color, False, screen_points.tolist(), 1)
+                if self.antialias:
+                    pygame.draw.aalines(self.screen, overlay_color, False, screen_points.tolist(), blend=1)
 
     def _road_color(
         self,
@@ -284,19 +331,13 @@ class PygameVisualizer:
             pulse = 1.0 + 0.25 * math.sin(ticks / 250.0 + severity * 2.0)
             radius = int(max(4, base_radius * pulse * ui_scale))
 
-            color = (
+            ring_color = (
                 min(255, int(220 + 35 * severity)),
                 int(120 + 90 * severity),
                 int(60 + 60 * severity),
             )
-            pygame.draw.circle(self.screen, color, pos, radius, width=2)
-            pygame.draw.circle(
-                self.screen,
-                (12, 10, 18),
-                pos,
-                max(2, int(radius * 0.55)),
-                width=0,
-            )
+            core_radius = max(2, int(radius * 0.55))
+            self._draw_ring(pos, radius, core_radius, ring_color, (12, 10, 18))
 
             kind_value = getattr(incident.kind, "value", incident.kind)
             label = str(kind_value)[0].upper()
@@ -318,8 +359,9 @@ class PygameVisualizer:
             ring_rect = pygame.Rect(0, 0, outer_radius * 2, outer_radius * 2)
             ring_rect.center = pos
 
-            pygame.draw.circle(self.screen, (18, 24, 36), pos, outer_radius + 2)
-            pygame.draw.circle(self.screen, (28, 38, 56), pos, outer_radius + 2, width=2)
+            ring_outer = outer_radius + 2
+            ring_inner = max(1, ring_outer - 2)
+            self._draw_ring(pos, ring_outer, ring_inner, (28, 38, 56), (18, 24, 36))
 
             phase_count = len(signal.phases)
             if phase_count:
@@ -340,8 +382,7 @@ class PygameVisualizer:
                     pygame.draw.arc(self.screen, arc_color, ring_rect, start_angle, end_angle, width)
 
             inner_radius = max(3, outer_radius - 3)
-            pygame.draw.circle(self.screen, (12, 18, 28), pos, inner_radius)
-            pygame.draw.circle(self.screen, (45, 62, 82), pos, inner_radius, width=1)
+            self._draw_ring(pos, inner_radius, max(1, inner_radius - 1), (45, 62, 82), (12, 18, 28))
 
             if phase_count:
                 active_color = self._phase_palette[
@@ -394,7 +435,7 @@ class PygameVisualizer:
 
             size = int(max(2, vehicle.profile.length_m * 0.35 * zoom))
             color = _vehicle_color(vehicle.profile.name)
-            pygame.draw.circle(self.screen, color, pos, size)
+            self._draw_disc(pos, size, color)
 
     def _draw_overlay(self, metrics: Dict[str, float], incident_count: int) -> None:
         if not self.config.enable_gui_overlays:
