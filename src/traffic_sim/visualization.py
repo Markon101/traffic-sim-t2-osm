@@ -78,6 +78,9 @@ class PygameVisualizer:
         self.road_polylines = self._cache_road_polylines()
         self.edge_midpoints = self._compute_edge_midpoints()
 
+        self.road_surface = pygame.Surface(self.screen.get_size())
+        self._view_dirty = True
+
     def close(self) -> None:
         if pygame:
             pygame.quit()
@@ -128,7 +131,12 @@ class PygameVisualizer:
         metrics: Dict[str, float],
     ) -> None:
         self.screen.fill((14, 18, 28))
-        self._draw_roads(signals, incidents)
+
+        if self._view_dirty:
+            self._render_static_roads()
+        self.screen.blit(self.road_surface, (0, 0))
+
+        self._draw_road_highlights(signals, incidents)
         self._draw_incident_markers(incidents)
         self._draw_signals(signals)
         self._draw_vehicles(vehicles)
@@ -169,6 +177,7 @@ class PygameVisualizer:
         dx, dy = delta
         self.translation[0] -= float(dx)
         self.translation[1] += float(dy)
+        self._view_dirty = True
 
     def _zoom_at(self, mouse_pos: Tuple[int, int], factor: float) -> None:
         new_scale = self.scale * factor
@@ -180,10 +189,12 @@ class PygameVisualizer:
         self.scale = new_scale
         self.translation[0] = mouse_pos[0] - world_pos[0] * self.scale
         self.translation[1] = (self.screen_rect.height - mouse_pos[1]) - world_pos[1] * self.scale
+        self._view_dirty = True
 
     def _reset_view(self) -> None:
         self.scale = self.default_scale
         self.translation = self.default_translation.copy()
+        self._view_dirty = True
 
     def _zoom_ratio(self) -> float:
         if self.default_scale <= 0:
@@ -248,11 +259,9 @@ class PygameVisualizer:
     # Drawing primitives                                                 #
     # ------------------------------------------------------------------ #
 
-    def _draw_roads(
-        self,
-        signals: Dict[int, TrafficSignal],
-        incidents: Dict[EdgeKey, Incident],
-    ) -> None:
+    def _render_static_roads(self) -> None:
+        """Renders the static road network to an offscreen surface."""
+        self.road_surface.fill((14, 18, 28))
         for edge_key, coords in self.road_polylines.items():
             if coords.shape[0] < 2:
                 continue
@@ -262,9 +271,35 @@ class PygameVisualizer:
                 continue
 
             edge = self.network.edges[edge_key]
+            color = self._road_color(edge, False, None)
+            width = self._road_width(edge)
+
+            pygame.draw.lines(self.road_surface, color, False, screen_points.tolist(), width)
+            if self.antialias:
+                pygame.draw.aalines(self.road_surface, color, False, screen_points.tolist(), blend=1)
+        self._view_dirty = False
+
+    def _draw_road_highlights(
+        self,
+        signals: Dict[int, TrafficSignal],
+        incidents: Dict[EdgeKey, Incident],
+    ) -> None:
+        """Draws dynamic elements like green lights and incident overlays."""
+        for edge_key, coords in self.road_polylines.items():
+            if coords.shape[0] < 2:
+                continue
+
+            edge = self.network.edges[edge_key]
             incident = incidents.get(edge_key)
             signal = signals.get(edge_key[1])
             highlight_green = bool(signal and signal.is_green(edge_key))
+
+            if not highlight_green and not incident:
+                continue
+
+            screen_points = self._transform_points(coords)
+            if screen_points.shape[0] < 2:
+                continue
 
             color = self._road_color(edge, highlight_green, incident)
             width = self._road_width(edge)
